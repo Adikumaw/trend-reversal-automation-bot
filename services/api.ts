@@ -1,6 +1,6 @@
-import { AppData, UserSettings } from '../types';
+import { AppData, UserSettings } from "../types";
 
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = "http://75.101.175.60:8000";
 
 export const fetchUiData = async (): Promise<AppData | null> => {
   // Use AbortController to enforce a strict timeout
@@ -9,18 +9,21 @@ export const fetchUiData = async (): Promise<AppData | null> => {
 
   try {
     // Add timestamp to query to prevent browser caching (cache busting)
-    const response = await fetch(`${API_BASE_URL}/api/ui-data?t=${Date.now()}`, {
-      method: 'GET',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0'
-      },
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-    
+    const response = await fetch(
+      `${API_BASE_URL}/api/ui-data?t=${Date.now()}`,
+      {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+          Expires: "0",
+        },
+        cache: "no-store",
+        signal: controller.signal,
+      }
+    );
+
     clearTimeout(timeoutId);
 
     if (!response.ok) {
@@ -44,8 +47,8 @@ export const controlSystem = async (payload: {
 }): Promise<boolean> => {
   try {
     const response = await fetch(`${API_BASE_URL}/api/control`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     return response.ok;
@@ -55,11 +58,13 @@ export const controlSystem = async (payload: {
   }
 };
 
-export const updateSettings = async (settings: UserSettings): Promise<boolean> => {
+export const updateSettings = async (
+  settings: UserSettings
+): Promise<boolean> => {
   try {
     const response = await fetch(`${API_BASE_URL}/api/update-settings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(settings),
     });
     return response.ok;

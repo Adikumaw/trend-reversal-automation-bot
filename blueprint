@@ -1,0 +1,154 @@
+i am giving you all the project details that i want to achieve in my project so understand it fully and remember all the points. after this I will provide you the mt5 and python code so your work is to make them extremely accurate and professional. and all the api and endpoints should be accurate and complete. so that UI can be integrated seemlessly. for now just understand the project on next prompt i will give you the meta trader and python code that i made but they have flaws so its your task to make them concrete and are allowed to fully rewrite them if needed.
+also do not go for the front end we will make the meta trader and python server concrete first.
+
+the project:
+The Master Prompt
+
+Role: You are an expert Full-Stack High-Frequency Trading System Architect. You are proficient in Python (FastAPI), modern JavaScript (Vue.js), and MQL5 (MetaTrader 5).
+
+Objective: Build a robust, fault-tolerant trading system where an MT5 Script/EA polls a Python Server for trading logic, while a Web UI controls parameters and monitors status.
+
+System Architecture:
+
+MQL5 Client: Pings server every 1s with account/trade data. Executes trades based on Server response.
+
+Python Server: Maintains state (persistence), calculates Grid logic, tracks Hash IDs, and handles Global Take Profit.
+
+Web UI: A dashboard for User Inputs (Dollar/Lots/Alerts) and real-time monitoring.
+
+Part 1: Python Server Logic (FastAPI)
+
+Technology: Python 3.9+, FastAPI, Uvicorn.
+Persistence: Use state.json to store current Inputs, Switches State, Active Run Hash IDs, and Reference Prices. If the server restarts, it must reload this file to resume operations seamlessy.
+
+Core Logic Requirements:
+
+Hash ID System:
+
+When Buy Switch is turned ON -> Generate unique ID (e.g., buy_x7z9).
+
+When Sell Switch is turned ON -> Generate unique ID (e.g., sell_a1b2).
+
+Trades sent to MT5 must carry this ID in the comment field (e.g., buy_x7z9_idx0).
+
+Grid Math (The "Dollar" Logic):
+
+Scenario: Market at 4100. Inputs: Dollars [2, 5, 3].
+
+Trade 0: Price touches 4098 (4100 - 2).
+
+Trade 1: Price touches 4093 (4098 - 5). Note: The gap is calculated from the previous trade price, not the start price.
+
+Trade 2: Price touches 4090 (4093 - 3).
+
+Sell Logic: Same logic, but adding to price (4102, 4107...).
+
+The "Limit" Logic:
+
+If Limit input is > 0: The Grid logic does NOT start until Market Price crosses the Limit level. Once crossed, the Limit price becomes the Start_Reference_Price.
+
+Global Take Profit (Mutually Exclusive):
+
+Inputs: Equity TP %, Balance TP %, All Exit TP ($). Only one can be active.
+
+Server calculates the Net Profit of ALL open trades associated with the current Active Hash IDs.
+
+If Net Profit >= Target -> Send CLOSE_ALL signal.
+
+Cyclic Run: If Cyclic Run is ON -> Close All -> Immediately generate NEW Hash IDs and restart logic from current price.
+
+Non-Cyclic: Close All -> Turn Switches OFF.
+
+Alerts:
+
+The Grid Input has a boolean Alert column.
+
+If the Server signals a trade for a specific Row Index, and that Row has Alert == True, set a flag in the UI response JSON so the UI can trigger a sound/popup.
+
+API Endpoints:
+
+POST /tick: Receives MT5 data (Equity, Balance, Price, List of Open Positions). Returns Action (BUY, SELL, CLOSE_ALL, WAIT) and Trade Details.
+
+GET /ui-data: Returns current Inputs, P/L per row, Active Row Index, and Alert Flags.
+
+POST /update-settings: Updates Inputs from UI.
+
+Part 2: Web UI (HTML/JS)
+
+Technology: Single HTML file using Vue.js (CDN) for reactivity. No compilation step.
+
+UI Features:
+
+Control Panel:
+
+Switches: Buy, Sell, Cyclic Run.
+
+Global TPs: Radio buttons to select between Equity%, Balance%, or Fixed $.
+
+Limit Price Input.
+
+"Emergency Close All" button.
+
+Data Grids (Buy Table & Sell Table):
+
+Columns: Index, Dollar (Input), Lots (Input), Alert (Checkbox), Entry Price (Calculated), Total Lots (Cumulative), P/L (Live cumulative profit/loss at that level).
+
+100 Rows.
+
+Validation: User must fill Dollar inputs sequentially (cannot skip Row 0 to fill Row 5).
+
+Behavior:
+
+Polls Server every 1s.
+
+Alerts: If Server flags an alert, play a sound (beep) and show a browser alert() or modal.
+
+Visuals: Highlight the "Active Row" (current grid level).
+
+Part 3: MQL5 Expert Advisor
+
+Technology: MQL5.
+Requirement: You must implement the following specific logic for the EA.
+
+JSON Serialization: Include a JSON library (like JAson.mqh or a simple custom serializer) to format the payload:
+{ "equity": ..., "balance": ..., "ask": ..., "bid": ..., "positions": [ { "ticket": 123, "comment": "buy_x7z9", "profit": -5.0 } ] }
+
+Communication: Use the Specific Code Snippets Provided Below for PollSignal, ClosePosition, PlaceBuyOrder, etc. Do not write your own WebRequest logic; adapt the provided functions.
+
+Provided MQL5 Snippets (MUST USE):
+(Copy and paste the code block you provided to me here - the PollSignal, ClosePosition, ModifyPositions, PlaceBuyOrder functions).
+
+EA Logic Flow (OnTick):
+
+Collect Account Info.
+
+Collect all Open Positions (Loop PositionsTotal).
+
+Serialize to JSON.
+
+Call PollSignal() (which calls WebRequest).
+
+Parse Response.
+
+If Response says BUY -> Call PlaceBuyOrder.
+
+If Response says CLOSE_ALL -> Loop PositionsTotal and call ClosePosition on matches.
+
+Output Deliverables:
+
+File Structure Tree.
+
+main.py: Complete FastAPI server code.
+
+index.html: Complete Vue.js frontend code.
+
+TradingClient.mq5: Complete MQL5 code (incorporating the provided snippets and adding the JSON/Tick logic).
+
+few additional confirmations:
+the server should maintain the price movements so that the calculation for limit entry can be calculated better and also can help in showing better p/l calculations and also can help in finding the market movements the current price can be shown in ui as red and green.
+the meta trader will send all the open trades details to the server and we are using our  server related trades marked like this "buy_ab96c0c8" / "sell_db63117e".
+so "buy_" and "sell_" is common. so till we know that any trades related to the server is open we should not let the server side to go for any other cycle or automation. so this way we can tract the trades even if the server or meta trader restarts.
+also server should maintain everything so that we do not mess with the UI stats.
+and the UI is prior for few works like buy/sell switch (should close all trades if turned off and should start the new iteration for switch on. but make sure if the trades are not closed in metatrader then closing them is first priority.) and other prior inputs are target value change (equity %, balance %, fixed dollor) and value change of dollor, alert and lot size columns (but only those rows who are not executed in metatrader are allowed to be changed on runtime) for those rows who are already executed in meta trader are not allowed to be  modified.
+
+the UI will show data like P/L, total lots in cumulitive way (the last row of executed trades will show the total p/l and total lots as they are cumulitive). UI will show the current price also.

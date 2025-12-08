@@ -445,6 +445,12 @@ async def handle_tick(request: Request):
             else:
                 idx = len(rt.buy_exec_map)
                 if idx < len(st.rows_buy):
+                    row = st.rows_buy[idx]
+                    # --- BETTER LOCATION: Check immediately before math ---
+                    if row.dollar <= 0 or row.lots <= 0:
+                        # Stop processing. Do not calculate price. Do not execute.
+                        # This effectively pauses the grid at this invalid row.
+                        return {"action": "WAIT"} 
                     target = calculate_grid_level_price("buy", idx)
                     if tick.ask <= target:
                         row = st.rows_buy[idx]
@@ -482,6 +488,10 @@ async def handle_tick(request: Request):
             else:
                 idx = len(rt.sell_exec_map)
                 if idx < len(st.rows_sell):
+                    row = st.rows_sell[idx]
+                    # --- BETTER LOCATION ---
+                    if row.dollar <= 0 or row.lots <= 0:
+                        return {"action": "WAIT"}
                     target = calculate_grid_level_price("sell", idx)
                     if tick.bid >= target:
                         row = st.rows_sell[idx]
@@ -526,7 +536,7 @@ async def update_settings(new: UserSettings):
         
         for new_row in new.rows_buy:
             if new_row.dollar <= 0 or new_row.lots <= 0:
-                 pass 
+                continue
 
             # If executed, use OLD data for locked fields, but NEW data for Alert
             if str(new_row.index) in rt.buy_exec_map and new_row.index in current_buy_rows_dict:
@@ -549,6 +559,9 @@ async def update_settings(new: UserSettings):
         current_sell_rows_dict = {r.index: r for r in state.settings.rows_sell}
         
         for new_row in new.rows_sell:
+            if new_row.dollar <= 0 or new_row.lots <= 0:
+                continue
+
             if str(new_row.index) in rt.sell_exec_map and new_row.index in current_sell_rows_dict:
                  old = current_sell_rows_dict[new_row.index]
                  merged_row = GridRow(

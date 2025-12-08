@@ -1,0 +1,72 @@
+**This is great news!** Your logs confirm the server is **working and accessible**.
+
+See this line?
+`INFO: 110.235.229.210:38664 - "GET / HTTP/1.1" 200 OK`
+That means your computer (IP starting with 110) successfully connected to the EC2 server.
+
+### 1. Why you see "Invalid HTTP request" warnings
+
+You (or your browser) likely tried to access the address using **`https://`** (Secure) instead of **`http://`** (Standard).
+
+- Since we did not set up SSL certificates, the server only understands standard HTTP.
+- **The Fix:** Always ensure the URL bar says `http://75.101.175.60:8000` (Not HTTPS).
+
+---
+
+### 2. Finalize the Setup (Run everything in background)
+
+Right now, your backend is running in your main terminal. If you close the window, the server dies. Let's put both Backend and Frontend in the background so they run forever.
+
+#### A. Background the Backend
+
+1.  In your current terminal (where the logs are), press **`CTRL + C`** to stop the server.
+2.  Start a screen session:
+    ```bash
+    screen -S backend
+    ```
+3.  Run the server again:
+    ```bash
+    python3 main.py
+    ```
+4.  **Detach:** Press **`CTRL + A`**, then **`D`**.
+    _(You are now back to the main command line, but the backend is running)._
+
+#### B. Background the Frontend
+
+Now we need to serve the UI so you can see the dashboard.
+
+1.  Navigate to your frontend folder:
+    ```bash
+    cd ~/trend-reversal-automation-bot/grid_automation_system
+    # (Or whatever your path is)
+    ```
+2.  Make sure you built the project (if you haven't already):
+    ```bash
+    npm run build
+    ```
+3.  Start a screen session for the UI:
+    ```bash
+    screen -S frontend
+    ```
+4.  Serve the build on port 3000:
+    ```bash
+    # We use 'npx serve' which downloads a simple server automatically
+    npx serve -s dist -l 3000
+    ```
+5.  **Detach:** Press **`CTRL + A`**, then **`D`**.
+
+---
+
+### 3. Open Your Dashboard
+
+Go to your browser and visit the **Frontend URL**:
+
+👉 **http://75.101.175.60:3000**
+
+- **Note:** If Chrome forces HTTPS and fails, type `http://` explicitly.
+- The UI should load, and since your `api.ts` is pointed to the correct IP, it will fetch data from port 8000 automatically.
+
+**You are done!** 🚀
+
+screen -X -S frontend quit
+killall screen

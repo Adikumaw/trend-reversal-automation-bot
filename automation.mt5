@@ -9,7 +9,8 @@
 #property strict
 
 //--- Input Parameters ---
-input string InpServerURL = "http://127.0.0.1:8000";  // Server URL
+//input string InpServerURL = "http://127.0.0.1:8000";  // Server URL
+input string InpServerURL = "http://75.101.175.60:8000";  // Server URL
 input int    InpTimeout   = 5000;                     // Request timeout (ms)
 input int    InpMagicNumber = 789456;                 // Magic number for trades
 input int    InpSlippage = 10;                        // Slippage in points

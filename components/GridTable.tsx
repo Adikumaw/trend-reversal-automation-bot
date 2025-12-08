@@ -6,11 +6,12 @@ interface GridTableProps {
   side: TradeSide;
   rows: GridRow[];
   execMap: Record<string, RowExecStats>;
+  invalidRows?: number[]; // Indices of rows that failed validation
   onRowChange: (index: number, field: keyof GridRow, value: any) => void;
   onRowSave: () => void;
 }
 
-const GridTable: React.FC<GridTableProps> = ({ side, rows, execMap, onRowChange, onRowSave }) => {
+const GridTable: React.FC<GridTableProps> = ({ side, rows, execMap, invalidRows = [], onRowChange, onRowSave }) => {
   const isBuy = side === 'BUY';
   const headerColor = isBuy ? 'text-green-400' : 'text-red-400';
   
@@ -32,11 +33,11 @@ const GridTable: React.FC<GridTableProps> = ({ side, rows, execMap, onRowChange,
 
   return (
     <div className="flex flex-col h-full bg-gray-900 border border-gray-800 rounded-lg overflow-hidden shadow-lg">
-      <div className={`px-4 py-2 border-b border-gray-800 font-bold text-center ${isBuy ? 'bg-green-900/20' : 'bg-red-900/20'} ${headerColor}`}>
+      <div className={`flex-shrink-0 px-4 py-2 border-b border-gray-800 font-bold text-center ${isBuy ? 'bg-green-900/20' : 'bg-red-900/20'} ${headerColor}`}>
         {side} GRID ({executedCount} Active)
       </div>
       
-      {/* Scrollable Container (Both X and Y) */}
+      {/* Table Body Container - Takes remaining height, allows internal scroll */}
       <div className="flex-1 overflow-auto relative scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
         <div className="min-w-[700px]"> {/* Min width forces horizontal scroll on small screens */}
             
@@ -51,30 +52,33 @@ const GridTable: React.FC<GridTableProps> = ({ side, rows, execMap, onRowChange,
                 <div className="col-span-1">Cum. P/L</div>
             </div>
 
-            {/* Table Body */}
+            {/* Rows */}
             <div>
                 {rows.map((row, idx) => {
                 const isExecuted = String(idx) in execMap;
                 const execData = execMap[String(idx)];
+                const isInvalid = invalidRows.includes(idx);
                 
-                // Sequential Logic: Disabled if previous row has 0 dollar gap (and not row 0)
-                // Note: We check local state 'rows' for the value.
+                // Sequential Logic
                 const prevRow = idx > 0 ? rows[idx - 1] : null;
                 const isSequentiallyLocked = idx > 0 && (prevRow?.dollar === 0);
                 
-                // v3.2.4 Logic:
-                // Input Disabled: If Executed OR Sequentially Locked
+                // v3.2.4 Logic
                 const isInputDisabled = isExecuted || isSequentiallyLocked;
-                // Alert Disabled: ONLY if Sequentially Locked (Allowed if Executed)
-                const isAlertDisabled = isSequentiallyLocked;
+                const isAlertDisabled = isSequentiallyLocked; // Alert allowed if executed
 
                 // Visual States
                 const isNext = idx === executedCount; 
                 const isActive = isExecuted;
                 
-                // Row Classes
+                // Base Classes
                 let rowClass = "grid grid-cols-7 gap-1 px-2 py-1 items-center text-sm border-b border-gray-800 transition-colors ";
-                if (isActive) {
+                
+                // State Styling
+                if (isInvalid) {
+                    // ERROR STATE
+                    rowClass += "bg-red-900/40 border-l-4 border-red-500 ";
+                } else if (isActive) {
                     rowClass += `bg-gray-800/80 ${isBuy ? 'text-green-100' : 'text-red-100'} `;
                 } else if (isNext) {
                     rowClass += "bg-blue-900/10 border-l-4 border-blue-500 ";
@@ -99,7 +103,10 @@ const GridTable: React.FC<GridTableProps> = ({ side, rows, execMap, onRowChange,
                         type="number"
                         step="0.00001"
                         disabled={isInputDisabled}
-                        className={`w-full bg-gray-950 border border-gray-700 rounded px-1 py-0.5 text-center font-mono focus:border-blue-500 focus:outline-none ${isInputDisabled ? 'opacity-50 cursor-not-allowed text-gray-500 bg-gray-900' : 'text-white'}`}
+                        className={`w-full border rounded px-1 py-0.5 text-center font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 
+                            ${isInputDisabled ? 'opacity-50 cursor-not-allowed bg-gray-900 border-gray-800 text-gray-500' : 'bg-gray-950 text-white'}
+                            ${isInvalid && !isInputDisabled ? 'border-red-500 bg-red-900/20' : 'border-gray-700'}
+                        `}
                         value={row.dollar}
                         onChange={(e) => handleInputChange(idx, 'dollar', e.target.value)}
                         onBlur={onRowSave}
@@ -113,7 +120,10 @@ const GridTable: React.FC<GridTableProps> = ({ side, rows, execMap, onRowChange,
                         type="number"
                         step="0.01"
                         disabled={isInputDisabled}
-                        className={`w-full bg-gray-950 border border-gray-700 rounded px-1 py-0.5 text-center font-mono focus:border-blue-500 focus:outline-none ${isInputDisabled ? 'opacity-50 cursor-not-allowed text-gray-500 bg-gray-900' : 'text-white'}`}
+                        className={`w-full border rounded px-1 py-0.5 text-center font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 
+                             ${isInputDisabled ? 'opacity-50 cursor-not-allowed bg-gray-900 border-gray-800 text-gray-500' : 'bg-gray-950 text-white'}
+                             ${isInvalid && !isInputDisabled ? 'border-red-500 bg-red-900/20' : 'border-gray-700'}
+                        `}
                         value={row.lots}
                         onChange={(e) => handleInputChange(idx, 'lots', e.target.value)}
                         onBlur={onRowSave}

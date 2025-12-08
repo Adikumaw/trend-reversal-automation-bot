@@ -428,6 +428,7 @@ async def handle_tick(request: Request):
         
         # Priority 4: BUY Entry
         if rt.buy_on and not rt.buy_is_closing:
+            # limit price
             if not rt.buy_id:
                 rt.buy_id = get_hash("buy")
                 rt.buy_exec_map = {}
@@ -448,8 +449,11 @@ async def handle_tick(request: Request):
                     if tick.ask <= target:
                         row = st.rows_buy[idx]
                         rt.buy_exec_map[str(idx)] = RowExecStats(
-                            index=idx, entry_price=tick.ask, lots=row.lots,
-                            profit=0, timestamp=datetime.now().isoformat()
+                            index=idx, 
+                            entry_price=tick.ask, 
+                            lots=row.lots,
+                            profit=0, 
+                            timestamp=datetime.now().isoformat()
                         )
                         print(f"[BUY] L{idx}: {target}")
                         save_state()
@@ -482,8 +486,11 @@ async def handle_tick(request: Request):
                     if tick.bid >= target:
                         row = st.rows_sell[idx]
                         rt.sell_exec_map[str(idx)] = RowExecStats(
-                            index=idx, entry_price=tick.bid, lots=row.lots,
-                            profit=0, timestamp=datetime.now().isoformat()
+                            index=idx,
+                            entry_price=tick.bid, 
+                            lots=row.lots,
+                            profit=0,
+                            timestamp=datetime.now().isoformat()
                         )
                         print(f"[SELL] L{idx}: {target}")
                         save_state()

@@ -48,11 +48,13 @@ const App: React.FC = () => {
   });
   const [isAcknowledging, setIsAcknowledging] = useState(false);
 
-  // Refs for tracking changes
-  const lastAlertTimeRef = useRef<string | null>(null);
+  // Refs for tracking changes and audio
   const audioContextRef = useRef<AudioContext | null>(null);
+  // Fix: Use ReturnType<typeof setInterval> instead of NodeJS.Timeout to support both browser and node environments
+  const alarmIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const playAlertSound = useCallback(() => {
+  // --- AUDIO LOGIC ---
+  const playBeep = useCallback(() => {
     try {
       if (!audioContextRef.current) {
         audioContextRef.current = new (window.AudioContext ||
@@ -65,70 +67,77 @@ const App: React.FC = () => {
       const gain = ctx.createGain();
 
       osc.type = "square";
-      osc.frequency.setValueAtTime(440, ctx.currentTime);
+      osc.frequency.setValueAtTime(550, ctx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.1);
 
       gain.gain.setValueAtTime(0.1, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
 
       osc.connect(gain);
       gain.connect(ctx.destination);
 
       osc.start();
-      osc.stop(ctx.currentTime + 0.5);
+      osc.stop(ctx.currentTime + 0.3);
     } catch (e) {
       console.error("Audio playback failed", e);
     }
   }, []);
 
-  // Alert Logic
+  const startAlarmLoop = useCallback(() => {
+    if (alarmIntervalRef.current) return; // Already ringing
+    playBeep();
+    alarmIntervalRef.current = setInterval(playBeep, 600); // Continuous beep
+  }, [playBeep]);
+
+  const stopAlarmLoop = useCallback(() => {
+    if (alarmIntervalRef.current) {
+      clearInterval(alarmIntervalRef.current);
+      alarmIntervalRef.current = null;
+    }
+  }, []);
+
+  // --- ALERT CHECKING LOGIC ---
   const checkAlerts = useCallback(
     (data: AppData) => {
-      // Collect all executed rows
-      const buyExecs = Object.values(data.runtime.buy_exec_map);
-      const sellExecs = Object.values(data.runtime.sell_exec_map);
-      const allExecs = [...buyExecs, ...sellExecs];
-
-      // Sort by timestamp desc
-      allExecs.sort(
-        (a, b) =>
-          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      // We check for ANY row that has (alert === true) AND (is executed in the map)
+      // This is more robust than checking timestamps.
+      
+      // Check Buy side
+      const triggeredBuyRow = data.settings.rows_buy.find(
+        (r) => r.alert && data.runtime.buy_exec_map[String(r.index)]
       );
 
-      const latest = allExecs[0];
-      if (!latest) return;
+      // Check Sell side
+      const triggeredSellRow = data.settings.rows_sell.find(
+        (r) => r.alert && data.runtime.sell_exec_map[String(r.index)]
+      );
 
-      // Check Staleness: If trade is older than 10 seconds (vs server time), ignore it.
-      const serverTime = new Date(data.last_update).getTime();
-      const tradeTime = new Date(latest.timestamp).getTime();
-      const ageSeconds = (serverTime - tradeTime) / 1000;
+      // Prioritize Buy if both happen (arbitrary, user can ack one then the other appears)
+      const targetRow = triggeredBuyRow || triggeredSellRow;
 
-      // Update ref so we don't check this trade again
-      if (latest.timestamp !== lastAlertTimeRef.current) {
-        lastAlertTimeRef.current = latest.timestamp;
-
-        // Only show popup if trade is fresh (< 10s old)
-        if (ageSeconds < 10) {
-          const isBuy = buyExecs.includes(latest);
+      if (targetRow) {
+        // Only trigger if we aren't already showing an alert
+        // (Or if we are showing one, checking if it's the same one is handled by !show check usually, 
+        // but if multiple alerts exist, we queue them essentially by waiting for Ack)
+        if (!alertState.show) {
+          const isBuy = !!triggeredBuyRow;
           const side = isBuy ? "BUY" : "SELL";
-          const rows = isBuy ? data.settings.rows_buy : data.settings.rows_sell;
-          const rowConfig = rows.find((r) => r.index === latest.index);
+          const execMap = isBuy ? data.runtime.buy_exec_map : data.runtime.sell_exec_map;
+          const execData = execMap[String(targetRow.index)];
 
-          if (rowConfig && rowConfig.alert) {
-            playAlertSound();
-            setAlertState({
-              show: true,
-              message: `Level ${
-                latest.index + 1
-              } Executed @ ${latest.entry_price.toFixed(5)}`,
-              side: side,
-              rowIndex: latest.index,
-            });
+          if (execData) {
+             setAlertState({
+                show: true,
+                message: `Level ${targetRow.index + 1} Executed @ ${execData.entry_price.toFixed(5)}`,
+                side: side,
+                rowIndex: targetRow.index,
+             });
+             startAlarmLoop();
           }
         }
       }
     },
-    [playAlertSound]
+    [alertState.show, startAlarmLoop]
   );
 
   // Helper to ensure we always display 100 rows
@@ -148,7 +157,6 @@ const App: React.FC = () => {
       const data = await api.fetchUiData();
 
       if (data) {
-        // console.log('[Server Data]', data); // Uncomment for debug
         setConnected(true);
         setAppData(data);
         checkAlerts(data);
@@ -173,49 +181,23 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [hasInitializedSettings, checkAlerts, mergeGridRows]);
 
-  // Strict Validation Logic - Returns invalid indices instead of throwing
+  // Strict Validation Logic
   const validateSettings = (
     settings: UserSettings
   ): { isValid: boolean; invalidBuy: number[]; invalidSell: number[] } => {
-    // Basic global checks (we handle these usually in inputs, but good to check)
-    // Note: We won't block the whole save for global inputs here as user asked for ROW validation.
-    // But negatives for TP/Limit should ideally be fixed. Assuming inputs prevent negative UI.
-
     const getInvalidIndices = (rows: GridRow[]) => {
       const invalidIndices: number[] = [];
       let gapDetected = false;
 
       rows.forEach((row, i) => {
-        // Index integrity check
-        if (row.index !== i) {
-          // Should not happen in UI logic, but good safety
-          return;
-        }
-
-        // Logic:
-        // If dollar > 0: "Active Row"
-        //   - If gapDetected (previous row was empty): INVALID (Gap)
-        //   - If lots <= 0: INVALID
-        // If dollar == 0: "Empty Row"
-        //   - Sets gapDetected = true
-        //   - If lots > 0: INVALID (Stray lots without gap)
+        if (row.index !== i) return;
 
         if (row.dollar > 0) {
-          if (gapDetected) {
-            // Gap detected: Value exists after an empty row
-            invalidIndices.push(i);
-          }
-          if (row.lots <= 0) {
-            // Invalid Lot size for active row
-            invalidIndices.push(i);
-          }
+          if (gapDetected) invalidIndices.push(i);
+          if (row.lots <= 0) invalidIndices.push(i);
         } else {
-          // Empty row
           gapDetected = true;
-          if (row.lots > 0) {
-            // Lots set but dollar is 0 -> Invalid state
-            invalidIndices.push(i);
-          }
+          if (row.lots > 0) invalidIndices.push(i);
         }
       });
       return invalidIndices;
@@ -238,19 +220,14 @@ const App: React.FC = () => {
 
   const handleSettingsSave = async (settingsOverride?: UserSettings) => {
     const settingsToSave = settingsOverride || localSettings;
-
-    // 1. Validate
     const validation = validateSettings(settingsToSave);
 
-    // 2. Update Validation State (Shows Red Rows)
     setInvalidRows({
       buy: validation.invalidBuy,
       sell: validation.invalidSell,
     });
 
-    // 3. If Valid, Send to Server. If Invalid, BLOCK update.
     if (validation.isValid) {
-      // Global checks (safe to allow save if positive, inputs usually handle type="number" min="0")
       if (
         settingsToSave.buy_tp_value < 0 ||
         settingsToSave.sell_tp_value < 0 ||
@@ -314,27 +291,30 @@ const App: React.FC = () => {
     }
   };
 
+  // --- ACKNOWLEDGE HANDLER ---
   const handleAcknowledgeAlert = async () => {
-    setIsAcknowledging(true);
+    stopAlarmLoop(); // 1. Stop sound immediately
+    
+    // 2. Hide UI immediately
     const side = alertState.side;
     const rowIndex = alertState.rowIndex;
+    setAlertState((prev) => ({ ...prev, show: false }));
+    setIsAcknowledging(true);
 
+    // 3. Update Local State (Optimistic)
     const newSettings = { ...localSettings };
     const rows = side === "BUY" ? newSettings.rows_buy : newSettings.rows_sell;
     const targetRow = rows.find((r) => r.index === rowIndex);
 
     if (targetRow) {
-      targetRow.alert = false;
+      targetRow.alert = false; // Turn off alert locally
       setLocalSettings(newSettings);
 
-      // This will trigger validation. If validation fails (e.g. user made bad edits elsewhere),
-      // the alert won't be acknowledged on server. This ensures data integrity.
-      // We could theoretically force-send, but safest is to require valid state.
+      // 4. Send Update to Server
       await handleSettingsSave(newSettings);
     }
 
     setIsAcknowledging(false);
-    setAlertState((prev) => ({ ...prev, show: false }));
   };
 
   const criticalError = appData?.runtime?.error_status;
@@ -343,33 +323,32 @@ const App: React.FC = () => {
     <div className="flex flex-col h-screen bg-gray-950 text-gray-100 font-sans relative">
       {/* ALERT POPUP MODAL */}
       {alertState.show && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-gray-800 border-2 border-white rounded-lg p-6 shadow-2xl max-w-sm w-full text-center transform scale-100 transition-transform">
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-gray-800 border-4 border-red-500 rounded-xl p-8 shadow-2xl max-w-md w-full text-center transform scale-100 transition-transform">
             <div
-              className={`text-4xl mb-4 ${
+              className={`text-6xl mb-6 ${
                 alertState.side === "BUY" ? "text-green-500" : "text-red-500"
               }`}
             >
               <i className="fas fa-bell animate-bounce"></i>
             </div>
-            <h2 className="text-2xl font-bold text-white mb-2">
-              {alertState.side} TRADE EXECUTION
+            <h2 className="text-3xl font-extrabold text-white mb-4 tracking-wider">
+              {alertState.side} EXECUTED
             </h2>
-            <p className="text-lg text-gray-300 font-mono mb-2">
-              {alertState.message}
-            </p>
-            <div className="text-xs text-gray-500 mb-6">
-              Time:{" "}
-              {new Date(lastAlertTimeRef.current || "").toLocaleTimeString()}
+            <div className="bg-gray-900 rounded-lg p-4 mb-6 border border-gray-700">
+               <p className="text-xl text-yellow-400 font-mono font-bold">
+                {alertState.message}
+               </p>
             </div>
+            
             <button
               onClick={handleAcknowledgeAlert}
               disabled={isAcknowledging}
-              className={`bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-6 rounded-full transition-colors w-full focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+              className={`w-full bg-blue-600 hover:bg-blue-500 text-white text-xl font-bold py-4 px-8 rounded-lg shadow-lg transform transition hover:scale-105 focus:outline-none focus:ring-4 focus:ring-blue-400 ${
                 isAcknowledging ? "opacity-70 cursor-wait" : ""
               }`}
             >
-              {isAcknowledging ? "SAVING..." : "ACKNOWLEDGE"}
+              {isAcknowledging ? "SAVING..." : "ACKNOWLEDGE ALERT"}
             </button>
           </div>
         </div>
@@ -405,8 +384,6 @@ const App: React.FC = () => {
           criticalError ? "opacity-50 pointer-events-none" : "opacity-100"
         }`}
       >
-        {/* Container for Tables - Flex Row on Desktop, Col on Mobile */}
-        {/* min-h ensures that on small screens the tables have height and body scrolls */}
         <div className="flex flex-col md:flex-row gap-4 h-full min-h-[500px]">
           <div className="flex-1 flex flex-col min-h-[400px]">
             <GridTable

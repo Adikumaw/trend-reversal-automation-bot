@@ -232,7 +232,9 @@ const App: React.FC = () => {
         settingsToSave.buy_tp_value < 0 ||
         settingsToSave.sell_tp_value < 0 ||
         settingsToSave.buy_limit_price < 0 ||
-        settingsToSave.sell_limit_price < 0
+        settingsToSave.sell_limit_price < 0 ||
+        settingsToSave.buy_hedge_value < 0 || 
+        settingsToSave.sell_hedge_value < 0
       )
         return;
 

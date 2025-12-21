@@ -27,9 +27,11 @@ export interface UserSettings {
 
   buy_tp_type: TpType;
   buy_tp_value: number;
+  buy_hedge_value: number; // New: Loss limit for hedging
 
   sell_tp_type: TpType;
   sell_tp_value: number;
+  sell_hedge_value: number; // New: Loss limit for hedging
 
   rows_buy: GridRow[];
   rows_sell: GridRow[];
@@ -56,6 +58,10 @@ export interface RuntimeState {
   // v3.2.4 Closing Phase updates
   buy_is_closing?: boolean;
   sell_is_closing?: boolean;
+
+  // v3.4.0 Hedge updates
+  buy_hedge_triggered?: boolean;
+  sell_hedge_triggered?: boolean;
   
   buy_exec_map: Record<string, RowExecStats>;
   sell_exec_map: Record<string, RowExecStats>;
@@ -94,8 +100,10 @@ export const DEFAULT_SETTINGS: UserSettings = {
   sell_limit_price: 0,
   buy_tp_type: 'equity_pct',
   buy_tp_value: 1.5,
+  buy_hedge_value: 0,
   sell_tp_type: 'equity_pct',
   sell_tp_value: 1.5,
+  sell_hedge_value: 0,
   rows_buy: createEmptyGrid(),
   rows_sell: createEmptyGrid()
 };

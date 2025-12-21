@@ -1,6 +1,6 @@
 """
 High-Frequency Grid Trading System - Production Server
-VERSION: 3.3.0 - SEPARATE BUY/SELL TARGETS & LIMIT PRICES
+VERSION: 3.4.0 - LOSS HEDGE FEATURE
 Stack: Python 3.9+, FastAPI, Uvicorn
 """
 
@@ -71,6 +71,10 @@ class RuntimeState(BaseModel):
     buy_is_closing: bool = False
     sell_is_closing: bool = False
     
+    # Hedge Trigger Flags
+    buy_hedge_triggered: bool = False
+    sell_hedge_triggered: bool = False
+    
     # Separate Limit Price Waiting Flags
     buy_waiting_limit: bool = False
     sell_waiting_limit: bool = False
@@ -101,6 +105,10 @@ class UserSettings(BaseModel):
     buy_tp_value: float = 0.0
     sell_tp_type: str = "equity_pct"
     sell_tp_value: float = 0.0
+    
+    # Loss Hedge Settings
+    buy_hedge_value: float = 0.0
+    sell_hedge_value: float = 0.0
     
     rows_buy: List[GridRow] = []
     rows_sell: List[GridRow] = []
@@ -285,9 +293,26 @@ def count_active_trades(tick: TickData, hash_id: str) -> int:
     if not hash_id: return 0
     return sum(1 for p in tick.positions if hash_id in p.comment)
 
+def get_last_executed_price(side: str) -> float:
+    """Get the price of the last executed level"""
+    rt = state.runtime
+    
+    if side == "buy":
+        if not rt.buy_exec_map:
+            return rt.buy_start_ref
+        indices = sorted([int(k) for k in rt.buy_exec_map.keys()])
+        last_idx = indices[-1]
+        return rt.buy_exec_map[str(last_idx)].entry_price
+    else:
+        if not rt.sell_exec_map:
+            return rt.sell_start_ref
+        indices = sorted([int(k) for k in rt.sell_exec_map.keys()])
+        last_idx = indices[-1]
+        return rt.sell_exec_map[str(last_idx)].entry_price
+
 # --- FastAPI App ---
 
-app = FastAPI(title="Grid Trading Server", version="3.3.0")
+app = FastAPI(title="Grid Trading Server", version="3.4.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -309,14 +334,14 @@ async def validation_handler(request: Request, exc: RequestValidationError):
 @app.on_event("startup")
 async def startup():
     print("=" * 60)
-    print("Grid Trading Server v3.3.0 - READY")
-    print("Separate Buy/Sell Targets & Limit Prices")
+    print("Grid Trading Server v3.4.0 - READY")
+    print("Loss Hedge Feature Enabled")
     print("=" * 60)
     load_state()
 
 @app.get("/")
 async def root():
-    return {"status": "running", "version": "3.3.0"}
+    return {"status": "running", "version": "3.4.0"}
 
 @app.post("/api/tick")
 async def handle_tick(request: Request):
@@ -379,6 +404,7 @@ async def handle_tick(request: Request):
                 print(f"[CONFIRMED] All Buy trades closed. Resetting Session.")
                 rt.buy_is_closing = False
                 rt.buy_exec_map = {}
+                rt.buy_hedge_triggered = False  # Reset hedge flag
                 
                 if rt.cyclic_on:
                     rt.buy_id = ""
@@ -399,6 +425,7 @@ async def handle_tick(request: Request):
                 print(f"[CONFIRMED] All Sell trades closed. Resetting Session.")
                 rt.sell_is_closing = False
                 rt.sell_exec_map = {}
+                rt.sell_hedge_triggered = False  # Reset hedge flag
                 
                 if rt.cyclic_on:
                     rt.sell_id = ""
@@ -411,6 +438,192 @@ async def handle_tick(request: Request):
                 return {"action": "WAIT"}
             else:
                 return {"action": "CLOSE_ALL", "comment": rt.sell_id}
+
+        # --- PRIORITY 1.8: HEDGE MONITOR ---
+        
+        # BUY SIDE HEDGE CHECK
+        if (rt.buy_on and rt.buy_id and not rt.buy_hedge_triggered and 
+            st.buy_hedge_value > 0 and not rt.buy_is_closing):
+            
+            buy_positions = [p for p in tick.positions if rt.buy_id in p.comment]
+            if buy_positions:
+                total_buy_profit = sum(p.profit for p in buy_positions)
+                loss_threshold = -1 * st.buy_hedge_value
+                
+                if total_buy_profit <= loss_threshold:
+                    print(f"[BUY HEDGE TRIGGERED] Loss: ${total_buy_profit:.2f} <= ${loss_threshold:.2f}")
+                    
+                    # Lock the losing side
+                    rt.buy_hedge_triggered = True
+                    
+                    # Calculate total hedge volume
+                    hedge_lots = sum(p.volume for p in buy_positions)
+                    print(f"[HEDGE] Calculated hedge volume: {hedge_lots} lots")
+                    
+                    # Check if opposite side is ready (not closing)
+                    if not rt.sell_is_closing:
+                        # Scenario A: Sell Side is OFF or Empty
+                        if not rt.sell_on or not rt.sell_id or len(rt.sell_exec_map) == 0:
+                            print(f"[HEDGE] Starting new SELL session with {hedge_lots} lots")
+                            
+                            # Force start Sell Session
+                            rt.sell_id = get_hash("sell")
+                            rt.sell_start_ref = tick.bid
+                            rt.sell_exec_map = {}
+                            rt.sell_on = True
+                            rt.sell_waiting_limit = False
+                            
+                            # Clear and inject hedge row
+                            st.rows_sell = [GridRow(index=0, dollar=0.0, lots=hedge_lots, alert=True)]
+                            
+                            save_state()
+                            
+                            # Execute immediately
+                            rt.sell_exec_map["0"] = RowExecStats(
+                                index=0,
+                                entry_price=tick.bid,
+                                lots=hedge_lots,
+                                profit=0,
+                                timestamp=datetime.now().isoformat()
+                            )
+                            save_state()
+                            
+                            return {
+                                "action": "SELL",
+                                "volume": hedge_lots,
+                                "comment": f"{rt.sell_id}_idx0",
+                                "alert": True
+                            }
+                        
+                        # Scenario B: Sell Side is Already Running
+                        else:
+                            print(f"[HEDGE] Appending {hedge_lots} lots to existing SELL session")
+                            
+                            # Get last executed index
+                            indices = sorted([int(k) for k in rt.sell_exec_map.keys()])
+                            last_idx = indices[-1] if indices else -1
+                            new_idx = last_idx + 1
+                            
+                            # Get price of last level
+                            last_price = get_last_executed_price("sell")
+                            
+                            # Calculate dynamic gap to current market
+                            new_dollar_gap = abs(tick.bid - last_price)
+                            
+                            # Inject new row
+                            new_row = GridRow(index=new_idx, dollar=new_dollar_gap, lots=hedge_lots, alert=True)
+                            st.rows_sell.append(new_row)
+                            
+                            save_state()
+                            
+                            # Execute immediately (gap designed to match current bid)
+                            rt.sell_exec_map[str(new_idx)] = RowExecStats(
+                                index=new_idx,
+                                entry_price=tick.bid,
+                                lots=hedge_lots,
+                                profit=0,
+                                timestamp=datetime.now().isoformat()
+                            )
+                            save_state()
+                            
+                            return {
+                                "action": "SELL",
+                                "volume": hedge_lots,
+                                "comment": f"{rt.sell_id}_idx{new_idx}",
+                                "alert": True
+                            }
+        
+        # SELL SIDE HEDGE CHECK
+        if (rt.sell_on and rt.sell_id and not rt.sell_hedge_triggered and 
+            st.sell_hedge_value > 0 and not rt.sell_is_closing):
+            
+            sell_positions = [p for p in tick.positions if rt.sell_id in p.comment]
+            if sell_positions:
+                total_sell_profit = sum(p.profit for p in sell_positions)
+                loss_threshold = -1 * st.sell_hedge_value
+                
+                if total_sell_profit <= loss_threshold:
+                    print(f"[SELL HEDGE TRIGGERED] Loss: ${total_sell_profit:.2f} <= ${loss_threshold:.2f}")
+                    
+                    # Lock the losing side
+                    rt.sell_hedge_triggered = True
+                    
+                    # Calculate total hedge volume
+                    hedge_lots = sum(p.volume for p in sell_positions)
+                    print(f"[HEDGE] Calculated hedge volume: {hedge_lots} lots")
+                    
+                    # Check if opposite side is ready (not closing)
+                    if not rt.buy_is_closing:
+                        # Scenario A: Buy Side is OFF or Empty
+                        if not rt.buy_on or not rt.buy_id or len(rt.buy_exec_map) == 0:
+                            print(f"[HEDGE] Starting new BUY session with {hedge_lots} lots")
+                            
+                            # Force start Buy Session
+                            rt.buy_id = get_hash("buy")
+                            rt.buy_start_ref = tick.ask
+                            rt.buy_exec_map = {}
+                            rt.buy_on = True
+                            rt.buy_waiting_limit = False
+                            
+                            # Clear and inject hedge row
+                            st.rows_buy = [GridRow(index=0, dollar=0.0, lots=hedge_lots, alert=True)]
+                            
+                            save_state()
+                            
+                            # Execute immediately
+                            rt.buy_exec_map["0"] = RowExecStats(
+                                index=0,
+                                entry_price=tick.ask,
+                                lots=hedge_lots,
+                                profit=0,
+                                timestamp=datetime.now().isoformat()
+                            )
+                            save_state()
+                            
+                            return {
+                                "action": "BUY",
+                                "volume": hedge_lots,
+                                "comment": f"{rt.buy_id}_idx0",
+                                "alert": True
+                            }
+                        
+                        # Scenario B: Buy Side is Already Running
+                        else:
+                            print(f"[HEDGE] Appending {hedge_lots} lots to existing BUY session")
+                            
+                            # Get last executed index
+                            indices = sorted([int(k) for k in rt.buy_exec_map.keys()])
+                            last_idx = indices[-1] if indices else -1
+                            new_idx = last_idx + 1
+                            
+                            # Get price of last level
+                            last_price = get_last_executed_price("buy")
+                            
+                            # Calculate dynamic gap to current market
+                            new_dollar_gap = abs(tick.ask - last_price)
+                            
+                            # Inject new row
+                            new_row = GridRow(index=new_idx, dollar=new_dollar_gap, lots=hedge_lots, alert=True)
+                            st.rows_buy.append(new_row)
+                            
+                            save_state()
+                            
+                            # Execute immediately (gap designed to match current ask)
+                            rt.buy_exec_map[str(new_idx)] = RowExecStats(
+                                index=new_idx,
+                                entry_price=tick.ask,
+                                lots=hedge_lots,
+                                profit=0,
+                                timestamp=datetime.now().isoformat()
+                            )
+                            save_state()
+                            
+                            return {
+                                "action": "BUY",
+                                "volume": hedge_lots,
+                                "comment": f"{rt.buy_id}_idx{new_idx}",
+                                "alert": True
+                            }
 
         # Priority 2: TP Logic - Check Buy Side
         if rt.buy_id:
@@ -442,10 +655,12 @@ async def handle_tick(request: Request):
                     rt.buy_id = ""
                     rt.buy_exec_map = {}
                     rt.buy_start_ref = mid
+                    rt.buy_hedge_triggered = False
                 else:
                     rt.buy_on = False
                     rt.buy_id = ""
                     rt.buy_exec_map = {}
+                    rt.buy_hedge_triggered = False
                 save_state()
 
         # Sell Side
@@ -458,14 +673,16 @@ async def handle_tick(request: Request):
                     rt.sell_id = ""
                     rt.sell_exec_map = {}
                     rt.sell_start_ref = mid
+                    rt.sell_hedge_triggered = False
                 else:
                     rt.sell_on = False
                     rt.sell_id = ""
                     rt.sell_exec_map = {}
+                    rt.sell_hedge_triggered = False
                 save_state()
         
-        # Priority 4: BUY Entry
-        if rt.buy_on and not rt.buy_is_closing:
+        # Priority 4: BUY Entry (Skip if hedge triggered)
+        if rt.buy_on and not rt.buy_is_closing and not rt.buy_hedge_triggered:
             if not rt.buy_id:
                 rt.buy_id = get_hash("buy")
                 rt.buy_exec_map = {}
@@ -504,8 +721,8 @@ async def handle_tick(request: Request):
                             "alert": row.alert
                         }
         
-        # Priority 5: SELL Entry
-        if rt.sell_on and not rt.sell_is_closing:
+        # Priority 5: SELL Entry (Skip if hedge triggered)
+        if rt.sell_on and not rt.sell_is_closing and not rt.sell_hedge_triggered:
             if not rt.sell_id:
                 rt.sell_id = get_hash("sell")
                 rt.sell_exec_map = {}
@@ -559,6 +776,9 @@ async def update_settings(new: UserSettings):
         # Validation
         if new.buy_tp_value < 0 or new.sell_tp_value < 0:
              raise Exception("TP values cannot be negative")
+        
+        if new.buy_hedge_value < 0 or new.sell_hedge_value < 0:
+             raise Exception("Hedge values cannot be negative")
 
         # Update separate limit prices
         state.settings.buy_limit_price = new.buy_limit_price
@@ -569,6 +789,10 @@ async def update_settings(new: UserSettings):
         state.settings.buy_tp_value = new.buy_tp_value
         state.settings.sell_tp_type = new.sell_tp_type
         state.settings.sell_tp_value = new.sell_tp_value
+        
+        # Update hedge settings
+        state.settings.buy_hedge_value = new.buy_hedge_value
+        state.settings.sell_hedge_value = new.sell_hedge_value
         
         # --- Buy Rows ---
         final_buy_rows = []
@@ -678,7 +902,7 @@ async def health():
     return {
         "status": "healthy" if not rt.error_status else "error",
         "error": rt.error_status,
-        "version": "3.3.0",
+        "version": "3.4.0",
         "buy": rt.buy_on,
         "sell": rt.sell_on,
         "price": rt.current_price

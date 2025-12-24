@@ -1,6 +1,6 @@
 """
 High-Frequency Grid Trading System - Production Server
-VERSION: 3.4.0 - LOSS HEDGE FEATURE
+VERSION: 3.4.2 - PROPER EXTERNAL CLOSE FIX
 Stack: Python 3.9+, FastAPI, Uvicorn
 """
 
@@ -9,6 +9,7 @@ import uuid
 import os
 import traceback
 import re
+import time
 from typing import List, Dict, Optional
 from datetime import datetime
 from collections import deque
@@ -23,6 +24,8 @@ STATE_FILE = "state.json"
 PRICE_HISTORY_LEN = 100
 # Regex to identify trades managed by this system format: "buy_HASH_idx0"
 TRADE_ID_PATTERN = re.compile(r"^(sell|buy)_[0-9a-fA-F]{8}_idx\d+$")
+# Grace period: Wait for broker to acknowledge trades before checking external close
+EXTERNAL_CLOSE_GRACE_PERIOD = 5.0  # seconds
 
 # --- Data Models ---
 
@@ -93,7 +96,11 @@ class RuntimeState(BaseModel):
     current_bid: float = 0.0
     price_direction: str = "neutral"
     
-    error_status: str = "" 
+    error_status: str = ""
+    
+    # Latency protection: Track when we last sent orders
+    buy_last_order_sent_ts: float = 0.0
+    sell_last_order_sent_ts: float = 0.0
 
 class UserSettings(BaseModel):
     # Separate Limit Prices
@@ -312,7 +319,7 @@ def get_last_executed_price(side: str) -> float:
 
 # --- FastAPI App ---
 
-app = FastAPI(title="Grid Trading Server", version="3.4.0")
+app = FastAPI(title="Grid Trading Server", version="3.4.2")
 
 app.add_middleware(
     CORSMiddleware,
@@ -334,14 +341,14 @@ async def validation_handler(request: Request, exc: RequestValidationError):
 @app.on_event("startup")
 async def startup():
     print("=" * 60)
-    print("Grid Trading Server v3.4.0 - READY")
-    print("Loss Hedge Feature Enabled")
+    print("Grid Trading Server v3.4.2 - PROPER FIX")
+    print("External Close Detection Improved")
     print("=" * 60)
     load_state()
 
 @app.get("/")
 async def root():
-    return {"status": "running", "version": "3.4.0"}
+    return {"status": "running", "version": "3.4.2"}
 
 @app.post("/api/tick")
 async def handle_tick(request: Request):
@@ -363,6 +370,7 @@ async def handle_tick(request: Request):
         
         rt = state.runtime
         st = state.settings
+        now_ts = time.time()
         
         # Conflict Block
         if rt.error_status:
@@ -377,7 +385,7 @@ async def handle_tick(request: Request):
         if price_history:
             rt.price_direction = "up" if mid > price_history[-1]['mid'] else "down"
         
-        price_history.append({"mid": mid, "ts": datetime.now().timestamp()})
+        price_history.append({"mid": mid, "ts": now_ts})
         rt.current_price = mid
         state.last_update_ts = datetime.now().isoformat()
         
@@ -404,7 +412,7 @@ async def handle_tick(request: Request):
                 print(f"[CONFIRMED] All Buy trades closed. Resetting Session.")
                 rt.buy_is_closing = False
                 rt.buy_exec_map = {}
-                rt.buy_hedge_triggered = False  # Reset hedge flag
+                rt.buy_hedge_triggered = False
                 
                 if rt.cyclic_on:
                     rt.buy_id = ""
@@ -425,7 +433,7 @@ async def handle_tick(request: Request):
                 print(f"[CONFIRMED] All Sell trades closed. Resetting Session.")
                 rt.sell_is_closing = False
                 rt.sell_exec_map = {}
-                rt.sell_hedge_triggered = False  # Reset hedge flag
+                rt.sell_hedge_triggered = False
                 
                 if rt.cyclic_on:
                     rt.sell_id = ""
@@ -486,6 +494,7 @@ async def handle_tick(request: Request):
                                 profit=0,
                                 timestamp=datetime.now().isoformat()
                             )
+                            rt.sell_last_order_sent_ts = now_ts  # Mark timestamp
                             save_state()
                             
                             return {
@@ -524,6 +533,7 @@ async def handle_tick(request: Request):
                                 profit=0,
                                 timestamp=datetime.now().isoformat()
                             )
+                            rt.sell_last_order_sent_ts = now_ts  # Mark timestamp
                             save_state()
                             
                             return {
@@ -578,6 +588,7 @@ async def handle_tick(request: Request):
                                 profit=0,
                                 timestamp=datetime.now().isoformat()
                             )
+                            rt.buy_last_order_sent_ts = now_ts  # Mark timestamp
                             save_state()
                             
                             return {
@@ -616,6 +627,7 @@ async def handle_tick(request: Request):
                                 profit=0,
                                 timestamp=datetime.now().isoformat()
                             )
+                            rt.buy_last_order_sent_ts = now_ts  # Mark timestamp
                             save_state()
                             
                             return {
@@ -643,10 +655,12 @@ async def handle_tick(request: Request):
                 save_state()
                 return {"action": "CLOSE_ALL", "comment": rt.sell_id}
 
-        # Priority 3: External Close (Manual Close Detection)
+        # Priority 3: External Close (Manual Close Detection) - WITH GRACE PERIOD
         
-        # Buy Side
-        if rt.buy_id and len(rt.buy_exec_map) > 0 and not rt.buy_is_closing:
+        # Buy Side - Only check if grace period has passed
+        buy_grace_passed = (now_ts - rt.buy_last_order_sent_ts) >= EXTERNAL_CLOSE_GRACE_PERIOD
+        
+        if (rt.buy_id and len(rt.buy_exec_map) > 0 and not rt.buy_is_closing and buy_grace_passed):
             mt5_count = count_active_trades(tick, rt.buy_id)
             
             if mt5_count == 0:
@@ -663,8 +677,10 @@ async def handle_tick(request: Request):
                     rt.buy_hedge_triggered = False
                 save_state()
 
-        # Sell Side
-        if rt.sell_id and len(rt.sell_exec_map) > 0 and not rt.sell_is_closing:
+        # Sell Side - Only check if grace period has passed
+        sell_grace_passed = (now_ts - rt.sell_last_order_sent_ts) >= EXTERNAL_CLOSE_GRACE_PERIOD
+        
+        if (rt.sell_id and len(rt.sell_exec_map) > 0 and not rt.sell_is_closing and sell_grace_passed):
             mt5_count = count_active_trades(tick, rt.sell_id)
             
             if mt5_count == 0:
@@ -712,6 +728,7 @@ async def handle_tick(request: Request):
                             profit=0, 
                             timestamp=datetime.now().isoformat()
                         )
+                        rt.buy_last_order_sent_ts = now_ts  # Mark timestamp
                         print(f"[BUY] L{idx}: {target}")
                         save_state()
                         return {
@@ -752,6 +769,7 @@ async def handle_tick(request: Request):
                             profit=0,
                             timestamp=datetime.now().isoformat()
                         )
+                        rt.sell_last_order_sent_ts = now_ts  # Mark timestamp
                         print(f"[SELL] L{idx}: {target}")
                         save_state()
                         return {
@@ -902,7 +920,7 @@ async def health():
     return {
         "status": "healthy" if not rt.error_status else "error",
         "error": rt.error_status,
-        "version": "3.4.0",
+        "version": "3.4.2",
         "buy": rt.buy_on,
         "sell": rt.sell_on,
         "price": rt.current_price

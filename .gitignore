@@ -17,7 +17,6 @@ __pycache__/
 
 # MetaTrader 5 files
 *.ex5
-*.mq5
 
 # Build artifacts
 dist/
@@ -44,10 +43,6 @@ infra/keys/
 
 # binaries
 *.bin
-
-# Deployment files
-infra/aws/quick aws setup
-infra/blueprints/blueprint
 
 # Miscellaneous
 *.lock

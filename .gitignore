@@ -42,11 +42,7 @@ infra/keys/
 *.swp
 *.swo
 
-# Images and binaries
-images/*.png
-images/*.jpg
-images/*.jpeg
-images/*.gif
+# binaries
 *.bin
 
 # Deployment files

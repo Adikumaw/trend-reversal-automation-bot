@@ -6,7 +6,7 @@
 
 **A professional-grade, full-stack algorithmic trading engine designed for mean-reversion and counter-trend strategies on MetaTrader 5.**
 
-![System Dashboard](images/HFT-Grid-Commander.png)
+![System Dashboard](images/home.png)
 
 ## 📉 What is Elastic DCA?
 

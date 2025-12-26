@@ -1,7 +1,8 @@
 {
-  "name": "hft-grid-commander",
+  "name": "elastic-dca-dashboard",
+  "version": "3.4.2",
+  "description": "Professional control interface for the Elastic DCA Engine, featuring IronClad risk monitoring and Strata grid management.",
   "private": true,
-  "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

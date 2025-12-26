@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { RuntimeState } from '../types';
 
@@ -50,9 +49,9 @@ const StatusHeader: React.FC<StatusHeaderProps> = ({ runtime, connected }) => {
       <div className="flex items-center space-x-6">
          {runtime && (
              <div className="flex space-x-4 text-xs font-mono text-gray-500">
-                <div title="Current Cycle IDs">
-                    B: <span className="text-gray-300">{runtime.buy_id || '---'}</span> | 
-                    S: <span className="text-gray-300">{runtime.sell_id || '---'}</span>
+                <div title="Active Vector Hashes">
+                    B-Hash: <span className="text-gray-300">{runtime.buy_id || '---'}</span> | 
+                    S-Hash: <span className="text-gray-300">{runtime.sell_id || '---'}</span>
                 </div>
              </div>
          )}

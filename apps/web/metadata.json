@@ -1,5 +1,0 @@
-{
-  "name": "HFT Grid Commander",
-  "description": "A high-frequency trading dashboard for controlling MT5 Grid algorithms, monitoring real-time P/L, and managing risk parameters via a Python backend.",
-  "requestFramePermissions": []
-}

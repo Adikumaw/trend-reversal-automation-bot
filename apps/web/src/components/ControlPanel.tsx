@@ -1,5 +1,5 @@
 import React from 'react';
-import { UserSettings, RuntimeState, TpType } from '../types';
+import { UserSettings, RuntimeState } from '../types';
 import Switch from './Switch';
 
 interface ControlPanelProps {
@@ -61,7 +61,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             {/* Take Profit Section */}
             <div>
                 <div className="flex items-center space-x-3 text-xs mb-1">
-                <label className="flex items-center cursor-pointer">
+                <label className="flex items-center cursor-pointer" title="Snap-Back Target">
                     <input 
                     type="radio" 
                     name={`${side}TpType`}
@@ -141,7 +141,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         {/* COL 1: System Controls (Switches + Emergency) */}
         <div className="lg:col-span-2 flex flex-col space-y-4 border-r border-gray-700 pr-4 h-full">
           <div className="flex flex-col space-y-3">
-             <h3 className="text-xs text-gray-400 uppercase tracking-wider font-bold">System</h3>
+             <h3 className="text-xs text-gray-400 uppercase tracking-wider font-bold">Engine Controls</h3>
              {/* Buy Switch */}
              <div className="flex justify-between items-center h-6">
                 {isBuyClosing ? (
@@ -151,7 +151,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                     </div>
                 ) : (
                     <Switch 
-                       label="BUY System" 
+                       label="BUY Vector" 
                        checked={isBuyOn} 
                        onChange={(val) => onControlToggle('buy', val)} 
                        color="green"
@@ -168,7 +168,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                     </div>
                 ) : (
                     <Switch 
-                       label="SELL System" 
+                       label="SELL Vector" 
                        checked={isSellOn} 
                        onChange={(val) => onControlToggle('sell', val)} 
                        color="red"
@@ -191,7 +191,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                 onClick={onEmergencyClose}
                 disabled={!connected}
                 className={`w-full font-bold py-2 px-2 rounded border shadow-lg text-xs transition-all active:transform active:scale-95 flex items-center justify-center space-x-1 ${connected ? 'bg-red-900/80 hover:bg-red-700 text-red-100 border-red-600 shadow-red-900/50' : 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'}`}
-                title="Emergency Close All"
+                title="Force Close All Vectors & Reset State"
             >
                 <i className="fas fa-skull-crossbones"></i>
                 <span>CLOSE ALL</span>
@@ -203,11 +203,11 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         <div className={`lg:col-span-5 flex flex-col gap-3 border-r border-gray-700 pr-4 transition-all duration-300 ${isBuyHedged ? 'opacity-80' : ''}`}>
            <div className="flex justify-between items-center border-b border-green-900/30 pb-1">
                 <h3 className="text-xs text-green-500 uppercase tracking-wider font-bold">
-                    Buy Configuration
+                    Buy Vector (Accumulation)
                 </h3>
                 {isBuyHedged && (
                     <div className="bg-red-600 text-white text-[10px] px-2 py-0.5 rounded font-bold animate-pulse shadow-sm shadow-red-500/50">
-                        <i className="fas fa-shield-alt mr-1"></i> FROZEN
+                        <i className="fas fa-lock mr-1"></i> LOCKED
                     </div>
                 )}
            </div>
@@ -241,11 +241,11 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         <div className={`lg:col-span-5 flex flex-col gap-3 transition-all duration-300 ${isSellHedged ? 'opacity-80' : ''}`}>
            <div className="flex justify-between items-center border-b border-red-900/30 pb-1">
                 <h3 className="text-xs text-red-500 uppercase tracking-wider font-bold">
-                    Sell Configuration
+                    Sell Vector (Accumulation)
                 </h3>
                 {isSellHedged && (
                     <div className="bg-red-600 text-white text-[10px] px-2 py-0.5 rounded font-bold animate-pulse shadow-sm shadow-red-500/50">
-                        <i className="fas fa-shield-alt mr-1"></i> FROZEN
+                        <i className="fas fa-lock mr-1"></i> LOCKED
                     </div>
                 )}
            </div>
